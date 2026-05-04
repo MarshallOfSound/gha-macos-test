@@ -74,8 +74,20 @@ static volatile int g_done = 0;
 - (void)applicationDidFinishLaunching:(NSNotification *)n {
   fprintf(stderr, "[%d] DID\n", getpid());
 
-  if (getenv("PROBE_CHILD")) {
-    exit(0);
+  const char *mode = getenv("PROBE_CHILD");
+  if (mode) {
+    if (strcmp(mode, "stay") == 0) {
+      if (getenv("PROBE_WINDOW")) {
+        NSWindow *w = [[NSWindow alloc]
+          initWithContentRect:NSMakeRect(0,0,200,200)
+                    styleMask:NSWindowStyleMaskTitled
+                      backing:NSBackingStoreBuffered defer:NO];
+        [w makeKeyAndOrderFront:nil];
+        fprintf(stderr, "[%d] window up\n", getpid());
+      }
+      return;   // orphan: sit in pump forever
+    }
+    exit(0);    // victim/churn: exit on DID
   }
 
   // Parent mode: drive the experiment off-main so the runloop stays in [NSApp run].
@@ -89,10 +101,7 @@ static volatile int g_done = 0;
     fprintf(stderr, "[parent %d] N=%d delay_ms=%d skip_wait=%d leave_alive=%d\n",
             getpid(), N, delay_ms, skip_wait, leave_alive);
 
-    setenv("PROBE_CHILD", "1", 1);
     char *child_argv[] = {(char *)g_argv0, NULL};
-
-    // Reset SIGINT in children (AppKit may have set SIG_IGN in parent).
     posix_spawnattr_t attr; posix_spawnattr_init(&attr);
     sigset_t dfl; sigemptyset(&dfl); sigaddset(&dfl, SIGINT);
     posix_spawnattr_setsigdefault(&attr, &dfl);
@@ -100,21 +109,34 @@ static volatile int g_done = 0;
 
     pid_t alive[64]; int alive_n = 0;
 
+    // Phase 1: spawn long-lived orphan siblings (PROBE_CHILD=stay) and wait
+    // for them to be fully launched (past DID, idling in pump). These model
+    // leaked Electron instances from earlier test suites.
+    if (leave_alive > 0) {
+      setenv("PROBE_CHILD", "stay", 1);
+      for (int i = 0; i < leave_alive; i++) {
+        pid_t pid;
+        if (posix_spawn(&pid, g_argv0, NULL, &attr, child_argv, environ) == 0) {
+          alive[alive_n++] = pid;
+          fprintf(stderr, "[parent] orphan %d -> %d\n", i+1, pid);
+        }
+      }
+      // Give them time to fully reach DID and settle.
+      usleep((useconds_t)(getenv("PROBE_INIT_SLEEP_MS")
+                            ? atoi(getenv("PROBE_INIT_SLEEP_MS")) + 500
+                            : 1000) * 1000);
+      fprintf(stderr, "[parent] %d orphans should now be past DID\n", alive_n);
+    }
+
+    // Phase 2: optional churn (kill mid-init).
+    setenv("PROBE_CHILD", "exit", 1);
     for (int i = 0; i < N; i++) {
       pid_t pid;
-      if (posix_spawn(&pid, g_argv0, NULL, &attr, child_argv, environ) != 0) {
-        fprintf(stderr, "[parent] spawn %d failed\n", i); continue;
-      }
+      if (posix_spawn(&pid, g_argv0, NULL, &attr, child_argv, environ) != 0) continue;
       usleep((useconds_t)delay_ms * 1000);
-      if (leave_alive && alive_n < leave_alive) {
-        alive[alive_n++] = pid;
-        fprintf(stderr, "[parent] churn %2d -> %d (left alive)\n", i+1, pid);
-        continue;
-      }
       kill(pid, getenv("PROBE_SIGKILL") ? SIGKILL : SIGINT);
       if (!skip_wait) { int st; waitpid(pid, &st, 0); }
-      fprintf(stderr, "[parent] churn %2d -> %d (SIGINT%s)\n", i+1, pid,
-              skip_wait ? ", zombie" : "");
+      fprintf(stderr, "[parent] churn %2d -> %d (killed)\n", i+1, pid);
     }
 
     fprintf(stderr, "--- victim ---\n");
