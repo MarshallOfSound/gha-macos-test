@@ -1,0 +1,23 @@
+name: probe
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-13, macos-13-large, macos-14, macos-14-large, macos-15, macos-15-large, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: build
+        run: |
+          chmod +x build.sh sweep.sh
+          ./build.sh
+          file Probe.app/Contents/MacOS/Probe
+      - name: sweep
+        run: ./sweep.sh
