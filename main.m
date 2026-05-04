@@ -113,7 +113,7 @@ static volatile int g_done = 0;
     // for them to be fully launched (past DID, idling in pump). These model
     // leaked Electron instances from earlier test suites.
     if (leave_alive > 0) {
-      setenv("PROBE_CHILD", "stay", 1);
+      setenv("PROBE_CHILD", getenv("PROBE_ORPHAN_STUCK") ? "stuck" : "stay", 1);
       for (int i = 0; i < leave_alive; i++) {
         pid_t pid;
         if (posix_spawn(&pid, g_argv0, NULL, &attr, child_argv, environ) == 0) {
@@ -198,7 +198,14 @@ int main(int argc, const char *argv[]) {
     [NSApp finishLaunching];
     fprintf(stderr, "[%d] finishLaunching returned\n", getpid());
 
-    if (getenv("PROBE_CHILD") && getenv("PROBE_INIT_SLEEP_MS"))
+    const char *cm = getenv("PROBE_CHILD");
+    if (cm && strcmp(cm, "stuck") == 0) {
+      // Model an orphan that got WILL, registered AE handlers, but its runloop
+      // never pumps (e.g. main thread blocked) — oapp stays queued forever.
+      fprintf(stderr, "[%d] STUCK after finishLaunching (never pumping)\n", getpid());
+      pause();
+    }
+    if (cm && getenv("PROBE_INIT_SLEEP_MS"))
       usleep((useconds_t)atoi(getenv("PROBE_INIT_SLEEP_MS")) * 1000);
 
     fprintf(stderr, "[%d] entering pump\n", getpid());

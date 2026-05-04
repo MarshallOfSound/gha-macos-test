@@ -39,6 +39,12 @@ for n in 3 10; do
 done
 
 echo
+echo "=== A2. stuck-orphan sweep (orphan got WILL, never pumps oapp) ==="
+for n in 1 2 3 5 10; do
+  run "stuck orphans=$n"       PROBE_LEAVE_ALIVE=$n PROBE_ORPHAN_STUCK=1 PROBE_N=0 PROBE_INIT_SLEEP_MS=300 PROBE_REGULAR=1
+done
+
+echo
 echo "=== B. churn-only sweep ==="
 run "churn N=12"                       PROBE_INIT_SLEEP_MS=300 PROBE_DELAY_MS=150 PROBE_SIGKILL=1
 run "churn N=40 + Regular"             PROBE_INIT_SLEEP_MS=300 PROBE_DELAY_MS=150 PROBE_SIGKILL=1 PROBE_N=40 PROBE_REGULAR=1
